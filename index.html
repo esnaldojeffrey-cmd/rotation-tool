@@ -31,72 +31,137 @@
         const ChevronRight = () => <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>;
         const ChevronLeft = () => <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>;
         const AlertCircle = () => <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>;
+        const Calendar = () => <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>;
+
+        // Schedule configurations
+        const SCHEDULES = {
+            'Sun-Wed': { days: [0, 1, 2, 3], color: 'blue', label: 'Sun-Wed' },
+            'Mon-Thu': { days: [1, 2, 3, 4], color: 'green', label: 'Mon-Thu' },
+            'Tue-Fri': { days: [2, 3, 4, 5], color: 'yellow', label: 'Tue-Fri' },
+            'Wed-Sat': { days: [3, 4, 5, 6], color: 'orange', label: 'Wed-Sat' },
+            'Thu-Mon': { days: [4, 5, 6, 0, 1], color: 'red', label: 'Thu-Mon' },
+            'Sat-Tue': { days: [6, 0, 1, 2], color: 'purple', label: 'Sat-Tue' },
+            'Flex': { days: [0, 1, 2, 3, 4, 5, 6], color: 'gray', label: 'Flex' }
+        };
 
         function QuickRotation() {
-            const [employees, setEmployees] = useState({ DA: [], PS: [], Sweep: [], All: [] });
+            const [employees, setEmployees] = useState([]);
             const [todayAssignments, setTodayAssignments] = useState({ DA: [], PS: [], Sweep: [], Expedite: [] });
             const [history, setHistory] = useState([]);
             const [currentDate, setCurrentDate] = useState(new Date().toLocaleDateString());
             const [showSetup, setShowSetup] = useState(false);
             const [showStats, setShowStats] = useState(false);
             const [bulkInput, setBulkInput] = useState('');
-            const [bulkRole, setBulkRole] = useState('DA');
             const [showBulkModal, setShowBulkModal] = useState(false);
             const [showNamesList, setShowNamesList] = useState(false);
 
             useEffect(() => {
-                const saved = localStorage.getItem('rotation_employees');
-                if (saved) setEmployees(JSON.parse(saved));
+                const saved = localStorage.getItem('rotation_employees_v2');
+                if (saved) {
+                    setEmployees(JSON.parse(saved));
+                } else {
+                    // Try to migrate old data
+                    const oldSaved = localStorage.getItem('rotation_employees');
+                    if (oldSaved) {
+                        const oldData = JSON.parse(oldSaved);
+                        // Convert old format to new format with schedules
+                        if (oldData.All && Array.isArray(oldData.All)) {
+                            const newEmployees = oldData.All.map(name => ({
+                                name,
+                                dasTrained: oldData.DA?.includes(name) || false,
+                                psTrained: oldData.PS?.includes(name) || false,
+                                sweepTrained: oldData.Sweep?.includes(name) || false,
+                                schedule: 'Flex',
+                                lastWeekRole: 'Expedite'
+                            }));
+                            setEmployees(newEmployees);
+                        }
+                    }
+                }
                 const savedHistory = localStorage.getItem('rotation_history');
                 if (savedHistory) setHistory(JSON.parse(savedHistory));
             }, []);
 
             useEffect(() => {
-                localStorage.setItem('rotation_employees', JSON.stringify(employees));
+                localStorage.setItem('rotation_employees_v2', JSON.stringify(employees));
             }, [employees]);
 
             useEffect(() => {
                 localStorage.setItem('rotation_history', JSON.stringify(history));
             }, [history]);
 
+            const isWorkingToday = (schedule) => {
+                const today = new Date().getDay(); // 0 = Sunday, 1 = Monday, etc.
+                return SCHEDULES[schedule]?.days.includes(today) || false;
+            };
+
+            const getScheduleColor = (schedule) => {
+                return SCHEDULES[schedule]?.color || 'gray';
+            };
+
             const processBulkInput = () => {
-                const names = bulkInput.split('\n').map(line => line.trim()).filter(line => line.length > 0);
-                const newEmployees = { ...employees };
-                names.forEach(name => {
-                    if (!newEmployees.All.includes(name)) newEmployees.All.push(name);
-                    if (bulkRole !== 'All' && !newEmployees[bulkRole].includes(name)) {
-                        newEmployees[bulkRole].push(name);
+                const lines = bulkInput.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+                const newEmployees = [...employees];
+                
+                lines.forEach(line => {
+                    const parts = line.split(/[,\t]+/).map(p => p.trim());
+                    const name = parts[0];
+                    if (!name) return;
+                    
+                    const dasTrained = parts[1] ? ['yes', 'y', 'true', '1', 'x'].includes(parts[1].toLowerCase()) : false;
+                    const psTrained = parts[2] ? ['yes', 'y', 'true', '1', 'x'].includes(parts[2].toLowerCase()) : false;
+                    const sweepTrained = parts[3] ? ['yes', 'y', 'true', '1', 'x'].includes(parts[3].toLowerCase()) : false;
+                    const lastWeekRole = parts[4] && ['DA', 'PS', 'Sweep', 'Expedite'].includes(parts[4]) ? parts[4] : 'Expedite';
+                    const schedule = parts[5] && Object.keys(SCHEDULES).includes(parts[5]) ? parts[5] : 'Flex';
+                    
+                    // Check if employee already exists
+                    const existingIndex = newEmployees.findIndex(e => e.name === name);
+                    if (existingIndex >= 0) {
+                        newEmployees[existingIndex] = { name, dasTrained, psTrained, sweepTrained, lastWeekRole, schedule };
+                    } else {
+                        newEmployees.push({ name, dasTrained, psTrained, sweepTrained, lastWeekRole, schedule });
                     }
                 });
+                
                 setEmployees(newEmployees);
                 setBulkInput('');
                 setShowBulkModal(false);
             };
 
-            const removeEmployee = (role, name) => {
-                setEmployees({ ...employees, [role]: employees[role].filter(n => n !== name) });
+            const addEmployee = () => {
+                setEmployees([...employees, {
+                    name: `Employee ${employees.length + 1}`,
+                    dasTrained: false,
+                    psTrained: false,
+                    sweepTrained: false,
+                    schedule: 'Flex',
+                    lastWeekRole: 'Expedite'
+                }]);
             };
 
-            const removeFromAll = (name) => {
-                setEmployees({
-                    DA: employees.DA.filter(n => n !== name),
-                    PS: employees.PS.filter(n => n !== name),
-                    Sweep: employees.Sweep.filter(n => n !== name),
-                    All: employees.All.filter(n => n !== name)
-                });
+            const removeEmployee = (name) => {
+                setEmployees(employees.filter(e => e.name !== name));
+            };
+
+            const updateEmployee = (oldName, field, value) => {
+                setEmployees(employees.map(emp =>
+                    emp.name === oldName ? { ...emp, [field]: value } : emp
+                ));
             };
 
             const exportEmployeesToExcel = () => {
-                const data = employees.All.map(name => ({
-                    'Name': name,
-                    'DA Trained': employees.DA.includes(name) ? 'Yes' : 'No',
-                    'PS Trained': employees.PS.includes(name) ? 'Yes' : 'No',
-                    'Sweep Trained': employees.Sweep.includes(name) ? 'Yes' : 'No'
+                const data = employees.map(emp => ({
+                    'Name': emp.name,
+                    'DA Trained': emp.dasTrained ? 'Yes' : 'No',
+                    'PS Trained': emp.psTrained ? 'Yes' : 'No',
+                    'Sweep Trained': emp.sweepTrained ? 'Yes' : 'No',
+                    'Schedule': emp.schedule,
+                    'Last Week Role': emp.lastWeekRole
                 }));
                 const ws = XLSX.utils.json_to_sheet(data);
                 const wb = XLSX.utils.book_new();
                 XLSX.utils.book_append_sheet(wb, ws, 'Employees');
-                XLSX.writeFile(wb, 'Employee_List.xlsx');
+                XLSX.writeFile(wb, 'Employee_List_With_Schedules.xlsx');
             };
 
             const importEmployeesFromExcel = (e) => {
@@ -108,26 +173,35 @@
                     const workbook = XLSX.read(data, { type: 'array' });
                     const worksheet = workbook.Sheets[workbook.SheetNames[0]];
                     const jsonData = XLSX.utils.sheet_to_json(worksheet);
-                    const newEmployees = { DA: [], PS: [], Sweep: [], All: [] };
+                    const newEmployees = [];
                     jsonData.forEach(row => {
                         const name = row.Name || row.name;
                         if (name) {
-                            newEmployees.All.push(name);
-                            if (row['DA Trained'] === 'Yes') newEmployees.DA.push(name);
-                            if (row['PS Trained'] === 'Yes') newEmployees.PS.push(name);
-                            if (row['Sweep Trained'] === 'Yes') newEmployees.Sweep.push(name);
+                            newEmployees.push({
+                                name,
+                                dasTrained: row['DA Trained'] === 'Yes',
+                                psTrained: row['PS Trained'] === 'Yes',
+                                sweepTrained: row['Sweep Trained'] === 'Yes',
+                                schedule: row.Schedule && Object.keys(SCHEDULES).includes(row.Schedule) ? row.Schedule : 'Flex',
+                                lastWeekRole: row['Last Week Role'] || 'Expedite'
+                            });
                         }
                     });
                     setEmployees(newEmployees);
-                    alert(`✅ Imported ${newEmployees.All.length} employees!`);
+                    alert(`✅ Imported ${newEmployees.length} employees with schedules!`);
                 };
                 reader.readAsArrayBuffer(file);
             };
 
             const getAvailableForRole = (role) => {
                 const assigned = [...todayAssignments.DA, ...todayAssignments.PS, ...todayAssignments.Sweep, ...todayAssignments.Expedite];
-                if (role === 'Expedite') return employees.All.filter(name => !assigned.includes(name));
-                return employees[role].filter(name => !assigned.includes(name));
+                let available = employees.filter(emp => !assigned.includes(emp.name) && isWorkingToday(emp.schedule));
+                
+                if (role === 'Expedite') return available;
+                if (role === 'DA') return available.filter(emp => emp.dasTrained);
+                if (role === 'PS') return available.filter(emp => emp.psTrained);
+                if (role === 'Sweep') return available.filter(emp => emp.sweepTrained);
+                return available;
             };
 
             const addToRole = (role, name) => {
@@ -150,9 +224,9 @@
             const getSuggestedPeople = (role, count) => {
                 const recentWorkers = getPeopleWhoWorkedRecently();
                 const available = getAvailableForRole(role);
-                const fresh = available.filter(name => !recentWorkers.has(name));
-                const rested = available.filter(name => recentWorkers.has(name));
-                return [...fresh, ...rested].slice(0, count);
+                const fresh = available.filter(emp => !recentWorkers.has(emp.name));
+                const rested = available.filter(emp => recentWorkers.has(emp.name));
+                return [...fresh, ...rested].slice(0, count).map(emp => emp.name);
             };
 
             const autoFill = () => {
@@ -202,79 +276,8 @@ Need anything, let me know`;
                 }
             };
 
-            const calculateWeeklyStats = () => {
-                const last7Days = history.slice(-7);
-                const employeeStats = {};
-                employees.All.forEach(name => {
-                    employeeStats[name] = { daysWorked: 0, roles: new Set(), rotated: false };
-                });
-                last7Days.forEach(day => {
-                    [...day.DA, ...day.PS, ...day.Sweep, ...day.Expedite].forEach(name => {
-                        if (employeeStats[name]) employeeStats[name].daysWorked++;
-                    });
-                    day.DA.forEach(name => employeeStats[name]?.roles.add('DA'));
-                    day.PS.forEach(name => employeeStats[name]?.roles.add('PS'));
-                    day.Sweep.forEach(name => employeeStats[name]?.roles.add('Sweep'));
-                    day.Expedite.forEach(name => employeeStats[name]?.roles.add('Expedite'));
-                });
-                Object.values(employeeStats).forEach(stats => {
-                    if (stats.roles.size > 1) stats.rotated = true;
-                });
-                const worked = Object.values(employeeStats).filter(s => s.daysWorked > 0).length;
-                const rotated = Object.values(employeeStats).filter(s => s.rotated).length;
-                return {
-                    employeeStats,
-                    totalWorked: worked,
-                    totalRotated: rotated,
-                    rotationRate: worked > 0 ? ((rotated / worked) * 100).toFixed(1) : 0
-                };
-            };
-
-            const getUnderutilized = () => {
-                const stats = calculateWeeklyStats();
-                return Object.entries(stats.employeeStats)
-                    .filter(([_, stat]) => stat.daysWorked <= 1)
-                    .map(([name]) => name)
-                    .filter(name => !Object.values(todayAssignments).flat().includes(name));
-            };
-
-            const exportWeeklySummary = () => {
-                const stats = calculateWeeklyStats();
-                const wb = XLSX.utils.book_new();
-                const summaryData = [
-                    { Metric: 'Total Employees', Value: employees.All.length },
-                    { Metric: 'Employees Who Worked (Last 7 Days)', Value: stats.totalWorked },
-                    { Metric: 'Employees Who Rotated Roles', Value: stats.totalRotated },
-                    { Metric: 'Rotation Rate', Value: `${stats.rotationRate}%` }
-                ];
-                const ws1 = XLSX.utils.json_to_sheet(summaryData);
-                XLSX.utils.book_append_sheet(wb, ws1, 'Summary');
-                const employeeData = Object.entries(stats.employeeStats).map(([name, stat]) => ({
-                    Name: name,
-                    'Days Worked': stat.daysWorked,
-                    'Roles Worked': Array.from(stat.roles).join(', ') || 'None',
-                    'Rotated?': stat.rotated ? 'Yes' : 'No'
-                })).sort((a, b) => b['Days Worked'] - a['Days Worked']);
-                const ws2 = XLSX.utils.json_to_sheet(employeeData);
-                XLSX.utils.book_append_sheet(wb, ws2, 'Employee Stats');
-                const historyData = history.slice(-7).map(day => ({
-                    Date: day.date,
-                    'DAA': day.DA.join(', ') || 'None',
-                    'PS': day.PS.join(', ') || 'None',
-                    'Sweeper': day.Sweep.join(', ') || 'None',
-                    'Expedite': day.Expedite.join(', ') || 'None'
-                }));
-                const ws3 = XLSX.utils.json_to_sheet(historyData);
-                XLSX.utils.book_append_sheet(wb, ws3, 'Daily History');
-                XLSX.writeFile(wb, 'Weekly_Rotation_Summary.xlsx');
-            };
-
-            const clearAllHistory = () => {
-                if (confirm('⚠️ Clear all history? This cannot be undone!')) {
-                    setHistory([]);
-                    localStorage.removeItem('rotation_history');
-                    alert('✅ History cleared!');
-                }
+            const getScheduledToday = () => {
+                return employees.filter(emp => isWorkingToday(emp.schedule));
             };
 
             const roleConfigs = [
@@ -284,381 +287,381 @@ Need anything, let me know`;
                 { key: 'Expedite', label: 'Expedite', color: 'orange', required: 1, extra: 1 }
             ];
 
-            if (showStats) {
-                const stats = calculateWeeklyStats();
-                const topWorkers = Object.entries(stats.employeeStats)
-                    .filter(([_, stat]) => stat.daysWorked > 0)
-                    .sort((a, b) => b[1].daysWorked - a[1].daysWorked)
-                    .slice(0, 10);
-                const notWorked = Object.entries(stats.employeeStats)
-                    .filter(([_, stat]) => stat.daysWorked === 0)
-                    .map(([name]) => name);
-
+            if (showSetup) {
                 return (
-                    <div className="max-w-4xl mx-auto p-6 bg-white rounded-lg shadow-lg min-h-screen">
-                        <div className="flex justify-between items-center mb-6">
-                            <h2 className="text-2xl font-bold flex items-center gap-2">
-                                <BarChart3 />
-                                Weekly Summary (Last 7 Days)
-                            </h2>
-                            <div className="flex gap-2">
-                                <button onClick={exportWeeklySummary} className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 flex items-center gap-2">
-                                    <Download /> Export
-                                </button>
-                                <button onClick={() => setShowStats(false)} className="bg-gray-500 text-white px-4 py-2 rounded hover:bg-gray-600">Close</button>
-                            </div>
-                        </div>
-                        <div className="grid grid-cols-3 gap-4 mb-6">
-                            <div className="bg-blue-50 p-4 rounded text-center border-2 border-blue-300">
-                                <div className="text-3xl font-bold text-blue-700">{stats.totalWorked}</div>
-                                <div className="text-sm text-blue-600">Worked</div>
-                            </div>
-                            <div className="bg-green-50 p-4 rounded text-center border-2 border-green-300">
-                                <div className="text-3xl font-bold text-green-700">{stats.totalRotated}</div>
-                                <div className="text-sm text-green-600">Rotated</div>
-                            </div>
-                            <div className="bg-purple-50 p-4 rounded text-center border-2 border-purple-300">
-                                <div className="text-3xl font-bold text-purple-700">{stats.rotationRate}%</div>
-                                <div className="text-sm text-purple-600">Rate</div>
-                            </div>
-                        </div>
-                        {topWorkers.length > 0 && (
-                            <div className="mb-6 bg-gray-50 rounded p-4">
-                                <h3 className="font-bold mb-3 text-gray-800">Top 10 Most Active</h3>
-                                <div className="space-y-2">
-                                    {topWorkers.map(([name, stat], idx) => (
-                                        <div key={name} className="bg-white p-3 rounded flex justify-between items-center border">
-                                            <div className="flex items-center gap-3">
-                                                <div className="bg-blue-500 text-white w-8 h-8 rounded-full flex items-center justify-center font-bold">{idx + 1}</div>
-                                                <div>
-                                                    <div className="font-medium">{name}</div>
-                                                    <div className="text-sm text-gray-600">{Array.from(stat.roles).join(', ')}</div>
-                                                </div>
-                                            </div>
-                                            <div className="text-right">
-                                                <div className="text-xl font-bold text-blue-600">{stat.daysWorked}</div>
-                                                <div className="text-xs text-gray-500">days</div>
-                                            </div>
-                                        </div>
-                                    ))}
+                    <div className="min-h-screen bg-gray-50 p-6">
+                        <div className="max-w-6xl mx-auto bg-white rounded-lg shadow-lg p-6">
+                            <div className="flex justify-between items-center mb-6">
+                                <h2 className="text-2xl font-bold">Employee Setup with Schedules</h2>
+                                <div className="flex gap-2">
+                                    <label className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 cursor-pointer flex items-center gap-2">
+                                        <Upload /> Import Excel
+                                        <input type="file" accept=".xlsx,.xls" onChange={importEmployeesFromExcel} className="hidden" />
+                                    </label>
+                                    <button onClick={exportEmployeesToExcel} className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 flex items-center gap-2">
+                                        <Download /> Export Excel
+                                    </button>
+                                    <button onClick={() => setShowSetup(false)} className="bg-gray-500 text-white px-4 py-2 rounded hover:bg-gray-600">Back</button>
                                 </div>
                             </div>
-                        )}
-                        {notWorked.length > 0 && (
-                            <div className="bg-yellow-50 border-2 border-yellow-300 rounded p-4 mb-4">
-                                <h3 className="font-bold text-yellow-800 mb-2 flex items-center gap-2">
-                                    <AlertCircle /> Haven't Worked This Week ({notWorked.length})
-                                </h3>
-                                <div className="text-sm text-yellow-700">{notWorked.join(', ')}</div>
-                            </div>
-                        )}
-                        <div className="bg-gray-50 rounded p-4 mb-4">
-                            <h3 className="font-bold mb-3 text-gray-800">Last 7 Days</h3>
-                            <div className="space-y-2">
-                                {history.slice(-7).reverse().map((day, idx) => (
-                                    <div key={idx} className="bg-white p-3 rounded border">
-                                        <div className="font-semibold mb-2">{day.date}</div>
-                                        <div className="grid grid-cols-2 gap-2 text-sm">
-                                            <div><span className="text-blue-600 font-medium">DA:</span> {day.DA.join(', ') || 'None'}</div>
-                                            <div><span className="text-purple-600 font-medium">PS:</span> {day.PS.join(', ') || 'None'}</div>
-                                            <div><span className="text-green-600 font-medium">Sweep:</span> {day.Sweep.join(', ') || 'None'}</div>
-                                            <div><span className="text-orange-600 font-medium">Expedite:</span> {day.Expedite.join(', ') || 'None'}</div>
+
+                            {showBulkModal && (
+                                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                                    <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full p-6 max-h-[90vh] overflow-y-auto">
+                                        <div className="flex justify-between items-center mb-4">
+                                            <h3 className="text-xl font-bold">Bulk Add Employees</h3>
+                                            <button onClick={() => setShowBulkModal(false)} className="text-gray-500 hover:text-gray-700 text-2xl">×</button>
+                                        </div>
+                                        <div className="mb-4 bg-blue-50 p-4 rounded">
+                                            <p className="text-sm text-blue-800 font-semibold mb-2">Format: Name, DA, PS, Sweep, LastWeek, Schedule</p>
+                                            <div className="text-sm text-blue-700 font-mono bg-white p-3 rounded space-y-1">
+                                                <div>Marcus Thompson, yes, yes, no, DA, Sun-Wed</div>
+                                                <div>Elena Rodriguez, yes, no, yes, Sweep, Flex</div>
+                                                <div>Kevin Patterson, yes, yes, no, PS, Mon-Thu</div>
+                                            </div>
+                                            <p className="text-xs text-blue-600 mt-2">
+                                                Schedules: Sun-Wed, Mon-Thu, Tue-Fri, Wed-Sat, Thu-Mon, Sat-Tue, Flex
+                                            </p>
+                                        </div>
+                                        <textarea
+                                            value={bulkInput}
+                                            onChange={(e) => setBulkInput(e.target.value)}
+                                            placeholder="Enter one employee per line"
+                                            className="w-full h-64 px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
+                                        />
+                                        <div className="flex gap-3 mt-4">
+                                            <button onClick={processBulkInput} className="flex-1 bg-green-500 text-white py-3 rounded-lg hover:bg-green-600 font-semibold">
+                                                Add {bulkInput.split('\n').filter(l => l.trim()).length} Employees
+                                            </button>
+                                            <button onClick={() => setShowBulkModal(false)} className="px-6 py-3 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 font-semibold">
+                                                Cancel
+                                            </button>
                                         </div>
                                     </div>
-                                ))}
+                                </div>
+                            )}
+
+                            <div className="mb-6">
+                                <button
+                                    onClick={() => setShowBulkModal(true)}
+                                    className="bg-blue-500 text-white px-6 py-3 rounded-lg hover:bg-blue-600 flex items-center gap-2 mb-4"
+                                >
+                                    <Upload /> Bulk Add Employees
+                                </button>
+                                <button
+                                    onClick={addEmployee}
+                                    className="bg-green-500 text-white px-6 py-3 rounded-lg hover:bg-green-600 flex items-center gap-2"
+                                >
+                                    <Users /> Add One Employee
+                                </button>
+                            </div>
+
+                            <div className="bg-gray-50 rounded-lg p-4 mb-6">
+                                <h3 className="font-semibold mb-3">Employee List ({employees.length} total)</h3>
+                                <div className="overflow-x-auto">
+                                    <table className="w-full">
+                                        <thead className="bg-gray-100">
+                                            <tr>
+                                                <th className="px-4 py-2 text-left">Name</th>
+                                                <th className="px-4 py-2 text-center">DA</th>
+                                                <th className="px-4 py-2 text-center">PS</th>
+                                                <th className="px-4 py-2 text-center">Sweep</th>
+                                                <th className="px-4 py-2 text-left">Schedule</th>
+                                                <th className="px-4 py-2 text-left">Last Week</th>
+                                                <th className="px-4 py-2 text-center">Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {employees.map((emp, idx) => (
+                                                <tr key={idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
+                                                    <td className="px-4 py-2">
+                                                        <input
+                                                            type="text"
+                                                            value={emp.name}
+                                                            onChange={(e) => updateEmployee(emp.name, 'name', e.target.value)}
+                                                            className="w-full px-2 py-1 border rounded text-sm"
+                                                        />
+                                                    </td>
+                                                    <td className="px-4 py-2 text-center">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={emp.dasTrained}
+                                                            onChange={(e) => updateEmployee(emp.name, 'dasTrained', e.target.checked)}
+                                                            className="w-4 h-4"
+                                                        />
+                                                    </td>
+                                                    <td className="px-4 py-2 text-center">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={emp.psTrained}
+                                                            onChange={(e) => updateEmployee(emp.name, 'psTrained', e.target.checked)}
+                                                            className="w-4 h-4"
+                                                        />
+                                                    </td>
+                                                    <td className="px-4 py-2 text-center">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={emp.sweepTrained}
+                                                            onChange={(e) => updateEmployee(emp.name, 'sweepTrained', e.target.checked)}
+                                                            className="w-4 h-4"
+                                                        />
+                                                    </td>
+                                                    <td className="px-4 py-2">
+                                                        <select
+                                                            value={emp.schedule}
+                                                            onChange={(e) => updateEmployee(emp.name, 'schedule', e.target.value)}
+                                                            className="w-full px-2 py-1 border rounded text-sm"
+                                                        >
+                                                            {Object.keys(SCHEDULES).map(sched => (
+                                                                <option key={sched} value={sched}>{sched}</option>
+                                                            ))}
+                                                        </select>
+                                                    </td>
+                                                    <td className="px-4 py-2">
+                                                        <select
+                                                            value={emp.lastWeekRole}
+                                                            onChange={(e) => updateEmployee(emp.name, 'lastWeekRole', e.target.value)}
+                                                            className="w-full px-2 py-1 border rounded text-sm"
+                                                        >
+                                                            <option value="DA">DA</option>
+                                                            <option value="PS">PS</option>
+                                                            <option value="Sweep">Sweep</option>
+                                                            <option value="Expedite">Expedite</option>
+                                                        </select>
+                                                    </td>
+                                                    <td className="px-4 py-2 text-center">
+                                                        <button
+                                                            onClick={() => removeEmployee(emp.name)}
+                                                            className="text-red-500 hover:text-red-700"
+                                                        >
+                                                            <Trash2 />
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+
+                            <div className="bg-blue-50 border border-blue-300 rounded-lg p-4">
+                                <p className="text-sm text-blue-800">
+                                    <strong>💡 Schedule Info:</strong> Auto-Fill will only show people scheduled to work today. Flex employees are available every day.
+                                </p>
                             </div>
                         </div>
-                        <button onClick={clearAllHistory} className="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600">Clear All History</button>
                     </div>
                 );
             }
 
-            if (showSetup) {
-                return (
-                    <div className="max-w-4xl mx-auto p-6 bg-white rounded-lg shadow-lg min-h-screen">
+            return (
+                <div className="min-h-screen bg-gradient-to-br from-orange-50 to-blue-50 p-6">
+                    <div className="max-w-4xl mx-auto bg-white rounded-lg shadow-xl p-6">
                         <div className="flex justify-between items-center mb-6">
-                            <h2 className="text-2xl font-bold">Employee Setup by Role</h2>
+                            <div>
+                                <h1 className="text-3xl font-bold flex items-center gap-2">
+                                    <RotateCw /> Quick Rotation
+                                </h1>
+                                <p className="text-gray-600 mt-1">{currentDate}</p>
+                            </div>
                             <div className="flex gap-2">
-                                <label className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 cursor-pointer flex items-center gap-2">
-                                    <Upload /> Import Excel
-                                    <input type="file" accept=".xlsx,.xls" onChange={importEmployeesFromExcel} className="hidden" />
-                                </label>
-                                <button onClick={exportEmployeesToExcel} className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 flex items-center gap-2">
-                                    <Download /> Export Excel
+                                <button onClick={() => setShowSetup(true)} className="bg-gray-500 text-white px-4 py-2 rounded hover:bg-gray-600 flex items-center gap-2">
+                                    <Settings /> Setup
                                 </button>
-                                <button onClick={() => setShowSetup(false)} className="bg-gray-500 text-white px-4 py-2 rounded hover:bg-gray-600">Back</button>
                             </div>
                         </div>
 
-                        {showBulkModal && (
-                            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-                                <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full p-6">
-                                    <div className="flex justify-between items-center mb-4">
-                                        <h3 className="text-xl font-bold">Bulk Add to {bulkRole === 'All' ? 'All Employees' : bulkRole}</h3>
-                                        <button onClick={() => setShowBulkModal(false)} className="text-gray-500 hover:text-gray-700 text-2xl">×</button>
-                                    </div>
-                                    <div className="mb-4 bg-blue-50 p-4 rounded">
-                                        <p className="text-sm text-blue-800 font-semibold mb-2">Enter one name per line:</p>
-                                        <div className="text-sm text-blue-700 font-mono bg-white p-2 rounded">
-                                            Xiomara Rodriguez<br/>
-                                            Marlando Jackson<br/>
-                                            Jeff Lewis
+                        {employees.length === 0 ? (
+                            <div className="bg-yellow-50 border-2 border-yellow-300 rounded-lg p-6 text-center">
+                                <div className="flex justify-center mb-4"><Users /></div>
+                                <h3 className="text-xl font-semibold text-gray-800 mb-2">No Employees Added Yet</h3>
+                                <p className="text-gray-600 mb-4">Click "Setup" to add your team with schedules</p>
+                                <button onClick={() => setShowSetup(true)} className="bg-blue-500 text-white px-6 py-3 rounded-lg hover:bg-blue-600">
+                                    Setup Now
+                                </button>
+                            </div>
+                        ) : (
+                            <>
+                                <div className="mb-6 bg-gradient-to-r from-blue-50 to-green-50 border-2 border-blue-200 rounded-lg p-4">
+                                    <div className="flex items-center justify-between">
+                                        <div>
+                                            <div className="font-bold text-lg text-gray-800">Today's Coverage</div>
+                                            <div className="text-sm text-gray-600">{getScheduledToday().length} people scheduled to work today</div>
+                                        </div>
+                                        <div className="flex gap-2">
+                                            {Object.entries(SCHEDULES).map(([key, config]) => {
+                                                const count = getScheduledToday().filter(emp => emp.schedule === key).length;
+                                                if (count === 0) return null;
+                                                return (
+                                                    <div key={key} className={`bg-${config.color}-100 border border-${config.color}-300 px-3 py-1 rounded`}>
+                                                        <div className="text-xs font-semibold text-${config.color}-700">{key}</div>
+                                                        <div className="text-lg font-bold text-${config.color}-800">{count}</div>
+                                                    </div>
+                                                );
+                                            })}
                                         </div>
                                     </div>
-                                    <textarea
-                                        value={bulkInput}
-                                        onChange={(e) => setBulkInput(e.target.value)}
-                                        placeholder="Enter names (one per line)"
-                                        className="w-full h-64 px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
-                                    />
-                                    <div className="flex gap-3 mt-4">
-                                        <button onClick={processBulkInput} className="flex-1 bg-green-500 text-white py-3 rounded-lg hover:bg-green-600 font-semibold">
-                                            Add {bulkInput.split('\n').filter(l => l.trim()).length} People
-                                        </button>
-                                        <button onClick={() => setShowBulkModal(false)} className="px-6 py-3 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 font-semibold">
-                                            Cancel
-                                        </button>
-                                    </div>
                                 </div>
-                            </div>
-                        )}
 
-                        <div className="grid grid-cols-2 gap-6">
-                            {[
-                                { key: 'DA', label: 'DAA Trained', color: 'blue' },
-                                { key: 'PS', label: 'PS Trained', color: 'purple' },
-                                { key: 'Sweep', label: 'Sweeper Trained', color: 'green' },
-                                { key: 'All', label: 'All Employees', color: 'orange' }
-                            ].map(({ key, label, color }) => (
-                                <div key={key} className={`bg-${color}-50 border-2 border-${color}-300 rounded-lg p-4`}>
-                                    <div className="flex justify-between items-center mb-3">
-                                        <h3 className={`font-bold text-${color}-700 text-lg`}>{label} ({employees[key].length})</h3>
-                                        <button 
-                                            onClick={() => { setBulkRole(key); setShowBulkModal(true); }}
-                                            className={`bg-${color}-500 text-white px-3 py-1 rounded text-sm hover:bg-${color}-600 flex items-center gap-1`}
-                                        >
-                                            <Upload /> Bulk Add
-                                        </button>
+                                <div className="grid grid-cols-4 gap-3 mb-6">
+                                    <div className="bg-blue-50 p-3 rounded-lg border border-blue-300 text-center">
+                                        <div className="text-2xl font-bold text-blue-700">{getScheduledToday().filter(e => e.dasTrained).length}</div>
+                                        <div className="text-xs text-blue-600">DA Available</div>
                                     </div>
-                                    {key === 'All' && <div className="text-xs text-orange-600 mb-2">Everyone can do Expedite</div>}
-                                    <div className="space-y-2 max-h-96 overflow-y-auto">
-                                        {employees[key].map((name, idx) => (
-                                            <div key={idx} className={`bg-white p-2 rounded flex justify-between items-center border border-${color}-200`}>
-                                                <span className="font-medium text-sm">{name}</span>
-                                                <button 
-                                                    onClick={() => key === 'All' ? removeFromAll(name) : removeEmployee(key, name)} 
-                                                    className="text-red-500 hover:text-red-700"
-                                                >
-                                                  <Trash2 />
-                                            </button>
-                                        </div>
-                                    ))}
+                                    <div className="bg-purple-50 p-3 rounded-lg border border-purple-300 text-center">
+                                        <div className="text-2xl font-bold text-purple-700">{getScheduledToday().filter(e => e.psTrained).length}</div>
+                                        <div className="text-xs text-purple-600">PS Available</div>
+                                    </div>
+                                    <div className="bg-green-50 p-3 rounded-lg border border-green-300 text-center">
+                                        <div className="text-2xl font-bold text-green-700">{getScheduledToday().filter(e => e.sweepTrained).length}</div>
+                                        <div className="text-xs text-green-600">Sweep Available</div>
+                                    </div>
+                                    <div className="bg-orange-50 p-3 rounded-lg border border-orange-300 text-center">
+                                        <div className="text-2xl font-bold text-orange-700">{getScheduledToday().length}</div>
+                                        <div className="text-xs text-orange-600">Total Today</div>
+                                    </div>
                                 </div>
-                            </div>
-                        ))}
-                    </div>
-                    <div className="mt-6 bg-blue-50 border border-blue-300 rounded-lg p-4">
-                        <p className="text-sm text-blue-800">
-                            <strong>💡 Tip:</strong> Export to Excel to backup your list, or import an existing Excel file to quickly load employees.
-                        </p>
+
+                                <div className="flex gap-3 mb-6">
+                                    <button onClick={autoFill} className="flex-1 bg-gradient-to-r from-blue-500 to-purple-500 text-white py-3 rounded-lg hover:from-blue-600 hover:to-purple-600 font-semibold flex items-center justify-center gap-2">
+                                        <RotateCw /> Auto-Fill (Smart Rotation)
+                                    </button>
+                                    <button onClick={clearToday} className="bg-gray-500 text-white px-6 py-3 rounded-lg hover:bg-gray-600">Clear</button>
+                                    {history.length > 0 && (
+                                        <button onClick={undoLastSave} className="bg-yellow-500 text-white px-6 py-3 rounded-lg hover:bg-yellow-600 flex items-center gap-2">
+                                            <ChevronLeft /> Undo
+                                        </button>
+                                    )}
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-4 mb-6">
+                                    {roleConfigs.map(({ key, label, color, required, extra }) => {
+                                        const currentCount = todayAssignments[key].length;
+                                        const isComplete = currentCount >= required;
+
+                                        return (
+                                            <div key={key} className={`bg-${color}-50 border-2 border-${color}-300 rounded-lg p-4`}>
+                                                <div className="flex justify-between items-center mb-3">
+                                                    <h3 className={`font-bold text-${color}-700 text-lg`}>{label}</h3>
+                                                    <div className="text-right">
+                                                        <div className={`text-sm font-semibold ${isComplete ? 'text-green-600' : 'text-red-600'}`}>
+                                                            {currentCount}/{required} required
+                                                        </div>
+                                                        {extra > 0 && <div className="text-xs text-gray-600">+{extra} extra OK</div>}
+                                                    </div>
+                                                </div>
+
+                                                <div className="space-y-2 mb-3">
+                                                    {todayAssignments[key].map((name, idx) => {
+                                                        const isRequired = idx < required;
+                                                        const isExtraAllowed = idx >= required && idx < required + extra;
+                                                        const isTooMany = idx >= required + extra;
+                                                        const emp = employees.find(e => e.name === name);
+                                                        const schedColor = emp ? getScheduleColor(emp.schedule) : 'gray';
+
+                                                        return (
+                                                            <div key={idx} className={`rounded p-2 flex justify-between items-center border ${
+                                                                isRequired ? `bg-${color}-100 border-${color}-300` :
+                                                                isExtraAllowed ? `bg-white border-${color}-200` :
+                                                                'bg-red-50 border-red-300'
+                                                            }`}>
+                                                                <div className="flex items-center gap-2">
+                                                                    <span className="font-medium text-sm">{name}</span>
+                                                                    <span className={`text-xs bg-${schedColor}-100 text-${schedColor}-700 px-2 py-0.5 rounded`}>
+                                                                        {emp?.schedule || 'N/A'}
+                                                                    </span>
+                                                                    {isRequired && <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded">Required</span>}
+                                                                    {isExtraAllowed && <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">Extra</span>}
+                                                                    {isTooMany && <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded">Too Many!</span>}
+                                                                </div>
+                                                                <button onClick={() => removeFromRole(key, name)} className="text-red-500 hover:text-red-700">
+                                                                    <Trash2 />
+                                                                </button>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+
+                                                <div className="relative">
+                                                    <button
+                                                        onClick={() => setShowNamesList(showNamesList === key ? null : key)}
+                                                        className={`w-full bg-${color}-500 text-white py-2 rounded hover:bg-${color}-600 text-sm font-semibold`}
+                                                    >
+                                                        + Add Person ({getAvailableForRole(key).length} available)
+                                                    </button>
+
+                                                    {showNamesList === key && (
+                                                        <div className="absolute z-10 w-full mt-1 bg-white border-2 border-gray-300 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                                                            {getAvailableForRole(key).map((emp, idx) => {
+                                                                const recentWorkers = getPeopleWhoWorkedRecently();
+                                                                const isRested = !recentWorkers.has(emp.name);
+                                                                const schedColor = getScheduleColor(emp.schedule);
+
+                                                                return (
+                                                                    <button
+                                                                        key={idx}
+                                                                        onClick={() => {
+                                                                            addToRole(key, emp.name);
+                                                                            setShowNamesList(null);
+                                                                        }}
+                                                                        className="w-full text-left px-4 py-2 hover:bg-gray-100 border-b last:border-b-0 flex justify-between items-center"
+                                                                    >
+                                                                        <div className="flex items-center gap-2">
+                                                                            <span>{emp.name}</span>
+                                                                            <span className={`text-xs bg-${schedColor}-100 text-${schedColor}-700 px-2 py-0.5 rounded`}>
+                                                                                {emp.schedule}
+                                                                            </span>
+                                                                        </div>
+                                                                        {isRested && <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded">Fresh</span>}
+                                                                    </button>
+                                                                );
+                                                            })}
+                                                            {getAvailableForRole(key).length === 0 && (
+                                                                <div className="px-4 py-3 text-gray-500 text-sm italic">No one scheduled today</div>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+
+                                <div className="flex gap-3 mb-6">
+                                    <button onClick={copyToClipboard} className="flex-1 bg-green-500 text-white py-4 rounded-lg hover:bg-green-600 font-bold text-lg flex items-center justify-center gap-2">
+                                        <Copy /> Copy for Chat
+                                    </button>
+                                    <button onClick={saveAndNext} className="flex-1 bg-orange-500 text-white py-4 rounded-lg hover:bg-orange-600 font-bold text-lg flex items-center justify-center gap-2">
+                                        <ChevronRight /> Save & Next Day
+                                    </button>
+                                </div>
+
+                                {history.length > 0 && (
+                                    <div className="bg-gray-50 rounded-lg p-4">
+                                        <h3 className="font-semibold text-gray-700 mb-3">Recent History (Last 3 Days)</h3>
+                                        <div className="space-y-2">
+                                            {history.slice(-3).reverse().map((day, idx) => (
+                                                <div key={idx} className="bg-white p-3 rounded border text-sm">
+                                                    <div className="font-semibold text-gray-700 mb-1">{day.date}</div>
+                                                    <div className="text-gray-600">
+                                                        <span className="text-blue-600">DA: {day.DA.join(', ') || 'None'}</span> •
+                                                        <span className="text-purple-600"> PS: {day.PS.join(', ') || 'None'}</span> •
+                                                        <span className="text-green-600"> Sweep: {day.Sweep.join(', ') || 'None'}</span> •
+                                                        <span className="text-orange-600"> Expedite: {day.Expedite.join(', ') || 'None'}</span>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </>
+                        )}
                     </div>
                 </div>
             );
         }
 
-        return (
-            <div className="min-h-screen bg-gradient-to-br from-orange-50 to-blue-50 p-6">
-                <div className="max-w-4xl mx-auto bg-white rounded-lg shadow-xl p-6">
-                    <div className="flex justify-between items-center mb-6">
-                        <div>
-                            <h1 className="text-3xl font-bold text-gray-800 flex items-center gap-2">
-                                <RotateCw /> Quick Rotation
-                            </h1>
-                            <p className="text-gray-600 mt-1">{currentDate}</p>
-                        </div>
-                        <div className="flex gap-2">
-                            <button onClick={() => setShowStats(true)} className="flex items-center gap-2 bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600">
-                                <BarChart3 /> Weekly Stats
-                            </button>
-                            <button onClick={() => setShowSetup(true)} className="flex items-center gap-2 bg-gray-500 text-white px-4 py-2 rounded-lg hover:bg-gray-600">
-                                <Settings /> Setup
-                            </button>
-                        </div>
-                    </div>
-
-                    {employees.All.length === 0 ? (
-                        <div className="bg-yellow-50 border-2 border-yellow-300 rounded-lg p-6 text-center">
-                            <Users />
-                            <h3 className="text-xl font-semibold text-gray-800 mb-2 mt-4">No Employees Added Yet</h3>
-                            <p className="text-gray-600 mb-4">Click "Setup" to add your team by role</p>
-                            <button onClick={() => setShowSetup(true)} className="bg-blue-500 text-white px-6 py-3 rounded-lg hover:bg-blue-600">
-                                Setup Now
-                            </button>
-                        </div>
-                    ) : (
-                        <>
-                            <div className="grid grid-cols-4 gap-3 mb-6">
-                                <div className="bg-blue-50 p-3 rounded-lg border border-blue-300 text-center">
-                                    <div className="text-2xl font-bold text-blue-700">{employees.DA.length}</div>
-                                    <div className="text-xs text-blue-600">DA Trained</div>
-                                </div>
-                                <div className="bg-purple-50 p-3 rounded-lg border border-purple-300 text-center">
-                                    <div className="text-2xl font-bold text-purple-700">{employees.PS.length}</div>
-                                    <div className="text-xs text-purple-600">PS Trained</div>
-                                </div>
-                                <div className="bg-green-50 p-3 rounded-lg border border-green-300 text-center">
-                                    <div className="text-2xl font-bold text-green-700">{employees.Sweep.length}</div>
-                                    <div className="text-xs text-green-600">Sweep Trained</div>
-                                </div>
-                                <div className="bg-orange-50 p-3 rounded-lg border border-orange-300 text-center">
-                                    <div className="text-2xl font-bold text-orange-700">{employees.All.length}</div>
-                                    <div className="text-xs text-orange-600">Total AAs</div>
-                                </div>
-                            </div>
-
-                            <div className="flex gap-3 mb-6">
-                                <button onClick={autoFill} className="flex-1 bg-gradient-to-r from-blue-500 to-purple-500 text-white py-3 rounded-lg hover:from-blue-600 hover:to-purple-600 font-semibold flex items-center justify-center gap-2">
-                                    <RotateCw /> Auto-Fill (Smart Rotation)
-                                </button>
-                                <button onClick={clearToday} className="bg-gray-500 text-white px-6 py-3 rounded-lg hover:bg-gray-600">Clear</button>
-                                {history.length > 0 && (
-                                    <button onClick={undoLastSave} className="bg-yellow-500 text-white px-6 py-3 rounded-lg hover:bg-yellow-600 flex items-center gap-2">
-                                        <ChevronLeft /> Undo
-                                    </button>
-                                )}
-                            </div>
-
-                            {getUnderutilized().length > 0 && history.length >= 3 && (
-                                <div className="mb-6 bg-yellow-50 border-2 border-yellow-400 rounded-lg p-4">
-                                    <div className="flex items-start gap-2">
-                                        <AlertCircle />
-                                        <div>
-                                            <div className="font-bold text-yellow-800 mb-1">⚠️ Underutilized Associates</div>
-                                            <div className="text-sm text-yellow-700 mb-2">These people have worked 1 day or less this week:</div>
-                                            <div className="text-sm text-yellow-900 font-medium">
-                                                {getUnderutilized().slice(0, 10).join(', ')}
-                                                {getUnderutilized().length > 10 && ` and ${getUnderutilized().length - 10} more...`}
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
-
-                            <div className="grid grid-cols-2 gap-4 mb-6">
-                                {roleConfigs.map(({ key, label, color, required, extra }) => {
-                                    const currentCount = todayAssignments[key].length;
-                                    const isComplete = currentCount >= required;
-
-                                    return (
-                                        <div key={key} className={`bg-${color}-50 border-2 border-${color}-300 rounded-lg p-4`}>
-                                            <div className="flex justify-between items-center mb-3">
-                                                <h3 className={`font-bold text-${color}-700 text-lg`}>{label}</h3>
-                                                <div className="text-right">
-                                                    <div className={`text-sm font-semibold ${isComplete ? 'text-green-600' : 'text-red-600'}`}>
-                                                        {currentCount}/{required} required
-                                                    </div>
-                                                    {extra > 0 && <div className="text-xs text-gray-600">+{extra} extra OK</div>}
-                                                </div>
-                                            </div>
-
-                                            <div className="space-y-2 mb-3">
-                                                {todayAssignments[key].map((name, idx) => {
-                                                    const isRequired = idx < required;
-                                                    const isExtraAllowed = idx >= required && idx < required + extra;
-                                                    const isTooMany = idx >= required + extra;
-
-                                                    return (
-                                                        <div key={idx} className={`rounded p-2 flex justify-between items-center border ${
-                                                            isRequired ? `bg-${color}-100 border-${color}-300` :
-                                                            isExtraAllowed ? `bg-white border-${color}-200` :
-                                                            'bg-red-50 border-red-300'
-                                                        }`}>
-                                                            <div className="flex items-center gap-2">
-                                                                <span className="font-medium text-sm">{name}</span>
-                                                                {isRequired && <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded">Required</span>}
-                                                                {isExtraAllowed && <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">Extra</span>}
-                                                                {isTooMany && <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded">Too Many!</span>}
-                                                            </div>
-                                                            <button onClick={() => removeFromRole(key, name)} className="text-red-500 hover:text-red-700">
-                                                                <Trash2 />
-                                                            </button>
-                                                        </div>
-                                                    );
-                                                })}
-                                            </div>
-
-                                            <div className="relative">
-                                                <button
-                                                    onClick={() => setShowNamesList(showNamesList === key ? null : key)}
-                                                    className={`w-full bg-${color}-500 text-white py-2 rounded hover:bg-${color}-600 text-sm font-semibold`}
-                                                >
-                                                    + Add Person ({getAvailableForRole(key).length} available)
-                                                </button>
-
-                                                {showNamesList === key && (
-                                                    <div className="absolute z-10 w-full mt-1 bg-white border-2 border-gray-300 rounded-lg shadow-lg max-h-48 overflow-y-auto">
-                                                        {getAvailableForRole(key).map((name, idx) => {
-                                                            const recentWorkers = getPeopleWhoWorkedRecently();
-                                                            const isRested = !recentWorkers.has(name);
-
-                                                            return (
-                                                                <button
-                                                                    key={idx}
-                                                                    onClick={() => {
-                                                                        addToRole(key, name);
-                                                                        setShowNamesList(null);
-                                                                    }}
-                                                                    className="w-full text-left px-4 py-2 hover:bg-gray-100 border-b last:border-b-0 flex justify-between items-center"
-                                                                >
-                                                                    <span>{name}</span>
-                                                                    {isRested && <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded">Fresh</span>}
-                                                                </button>
-                                                            );
-                                                        })}
-                                                        {getAvailableForRole(key).length === 0 && (
-                                                            <div className="px-4 py-3 text-gray-500 text-sm italic">No one available</div>
-                                                        )}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-
-                            <div className="flex gap-3 mb-6">
-                                <button onClick={copyToClipboard} className="flex-1 bg-green-500 text-white py-4 rounded-lg hover:bg-green-600 font-bold text-lg flex items-center justify-center gap-2">
-                                    <Copy /> Copy for Chat
-                                </button>
-                                <button onClick={saveAndNext} className="flex-1 bg-orange-500 text-white py-4 rounded-lg hover:bg-orange-600 font-bold text-lg flex items-center justify-center gap-2">
-                                    <ChevronRight /> Save & Next Day
-                                </button>
-                            </div>
-
-                            {history.length > 0 && (
-                                <div className="bg-gray-50 rounded-lg p-4">
-                                    <h3 className="font-semibold text-gray-700 mb-3">Recent History (Last 3 Days)</h3>
-                                    <div className="space-y-2">
-                                        {history.slice(-3).reverse().map((day, idx) => (
-                                            <div key={idx} className="bg-white p-3 rounded border text-sm">
-                                                <div className="font-semibold text-gray-700 mb-1">{day.date}</div>
-                                                <div className="text-gray-600">
-                                                    <span className="text-blue-600">DA: {day.DA.join(', ') || 'None'}</span> •
-                                                    <span className="text-purple-600"> PS: {day.PS.join(', ') || 'None'}</span> •
-                                                    <span className="text-green-600"> Sweep: {day.Sweep.join(', ') || 'None'}</span> •
-                                                    <span className="text-orange-600"> Expedite: {day.Expedite.join(', ') || 'None'}</span>
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-                        </>
-                    )}
-                </div>
-            </div>
-        );
-    }
-
-    ReactDOM.render(<QuickRotation />, document.getElementById('root'));
-</script>
+        ReactDOM.render(<QuickRotation />, document.getElementById('root'));
+    </script>
+</body>
+</html>
